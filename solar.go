@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/goburrow/modbus"
@@ -46,21 +47,40 @@ type Registers struct {
 }
 
 type SolarData struct {
+	DateTime                time.Time
 	Status                  string
-	PvVolts                 float32
-	PvAmps                  float32
-	PvWatts                 float32
-	AcWatts                 float32
-	AcHerz                  float32
-	AcVolts                 float32
-	AcAmps                  float32
-	TotalKiloWattsHourToday float32
-	TotalKiloWattsHour      float32
-	RuntimeSeconds          int32
-	TemperatureCelcius      float32
+	PvVolts                 float64
+	PvAmps                  float64
+	PvWatts                 float64
+	AcWatts                 float64
+	AcHerz                  float64
+	AcVolts                 float64
+	AcAmps                  float64
+	TotalKiloWattsHourToday float64
+	TotalKiloWattsHour      float64
+	RuntimeSeconds          int
+	TemperatureCelcius      float64
 }
 
 func main() {
+	modbusClient := newModbusClient()
+
+	registers := registersFromModbusClient(modbusClient)
+
+	solarData := solarDataFromRegisters(registers)
+
+	storeSolarData(solarData)
+
+	json, err := json.MarshalIndent(solarData, "", "    ")
+
+	if err != nil {
+		println(err.Error())
+	}
+
+	fmt.Printf("results: %s\n", json)
+}
+
+func newModbusClient() modbus.Client {
 	handler := modbus.NewRTUClientHandler("/dev/ttyUSB0")
 	handler.BaudRate = 9600
 	handler.DataBits = 8
@@ -76,8 +96,10 @@ func main() {
 		println(err.Error())
 	}
 
-	client := modbus.NewClient(handler)
+	return modbus.NewClient(handler)
+}
 
+func registersFromModbusClient(client modbus.Client) Registers {
 	results, err := client.ReadInputRegisters(0, 33)
 
 	if err != nil {
@@ -94,11 +116,7 @@ func main() {
 		println(err.Error())
 	}
 
-	solarData := solarDataFromRegisters(registers)
-
-	json, _ := json.MarshalIndent(solarData, "", "    ")
-
-	fmt.Printf("results: %s\n", json)
+	return registers
 }
 
 func solarDataFromRegisters(registers Registers) SolarData {
@@ -109,17 +127,36 @@ func solarDataFromRegisters(registers Registers) SolarData {
 	}
 
 	return SolarData{
+		time.Now(),
 		status[registers.Status],
-		float32(registers.PvDeciVolts) / 10,
-		float32(registers.PvDeciAmps) / 10,
-		float32(registers.PvDeciWatts) / 10,
-		float32(registers.AcDeciWatts) / 10,
-		float32(registers.AcCentiHerz) / 100,
-		float32(registers.AcDeciVolts) / 10,
-		float32(registers.AcDeciAmps) / 10,
-		float32(registers.TotalHectaWattsHourToday) / 10,
-		float32(registers.TotalHectaWattsHour) / 10,
-		registers.RuntimeSeconds,
-		float32(registers.TemperatureDeciCelcius) / 10,
+		float64(registers.PvDeciVolts) / 10,
+		float64(registers.PvDeciAmps) / 10,
+		float64(registers.PvDeciWatts) / 10,
+		float64(registers.AcDeciWatts) / 10,
+		float64(registers.AcCentiHerz) / 100,
+		float64(registers.AcDeciVolts) / 10,
+		float64(registers.AcDeciAmps) / 10,
+		float64(registers.TotalHectaWattsHourToday) / 10,
+		float64(registers.TotalHectaWattsHour) / 10,
+		int(registers.RuntimeSeconds),
+		float64(registers.TemperatureDeciCelcius) / 10,
+	}
+}
+
+func storeSolarData(solarData SolarData) {
+	json, _ := json.Marshal(solarData)
+	filename := fmt.Sprintf("/data/solar/%s.json", solarData.DateTime.Format("2006-01"))
+
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		println(err.Error())
+	}
+
+	if _, err := file.Write([]byte(fmt.Sprintf("%s\n", json))); err != nil {
+		println(err.Error())
+	}
+
+	if err := file.Close(); err != nil {
+		println(err.Error())
 	}
 }
